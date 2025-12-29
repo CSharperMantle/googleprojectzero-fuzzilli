@@ -115,11 +115,9 @@ let spidermonkeyProfile = Profile(
     disabledMutators: [],
 
     additionalBuiltins: [
-        "gc": .function([] => .undefined),
-        "enqueueJob": .function([.function()] => .undefined),
-        "drainJobQueue": .function([] => .undefined),
-        "bailout": .function([] => .undefined),
-
+        "gc"            : .function([] => .undefined),
+        "drainJobQueue" : .function([] => .undefined),
+        "bailout"       : .function([] => .undefined),
     ],
 
     additionalObjectGroups: [],
