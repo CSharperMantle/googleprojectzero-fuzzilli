@@ -30,8 +30,6 @@ private let GcGenerator = CodeGenerator("GcGenerator") { b in
 let spidermonkeyProfile = Profile(
     processArgs: { randomize in
         var args = [
-            "--baseline-warmup-threshold=10",
-            "--ion-warmup-threshold=100",
             "--ion-check-range-analysis",
             "--ion-extra-checks",
             "--fuzzing-safe",
@@ -39,8 +37,14 @@ let spidermonkeyProfile = Profile(
             "--reprl",
         ]
 
-        guard randomize else { return args }
+        guard randomize else {
+            args.append("--baseline-warmup-threshold=10")
+            args.append("--ion-warmup-threshold=100")
+            return args
+        }
 
+        args.append("--baseline-warmup-threshold=\(1<<Int.random(in: 0...6))")
+        args.append("--ion-warmup-threshold=\(1<<Int.random(in: 3...10))")
         args.append("--small-function-length=\(1<<Int.random(in: 7...12))")
         args.append("--inlining-entry-threshold=\(1<<Int.random(in: 2...10))")
         args.append("--gc-zeal=\(probability(0.5) ? UInt32(0) : UInt32(Int.random(in: 1...24)))")
@@ -59,6 +63,7 @@ let spidermonkeyProfile = Profile(
             args.append("--no-native-regexp")
         }
         args.append("--ion-optimize-shapeguards=\(probability(0.9) ? "on": "off")")
+        args.append("--ion-optimize-gcbarriers=\(probability(0.9) ? "on": "off")")
         args.append("--ion-licm=\(probability(0.9) ? "on": "off")")
         args.append("--ion-instruction-reordering=\(probability(0.9) ? "on": "off")")
         args.append("--cache-ir-stubs=\(probability(0.9) ? "on": "off")")
@@ -66,6 +71,50 @@ let spidermonkeyProfile = Profile(
             chooseUniform(from: [
                 "--no-sse3", "--no-ssse3", "--no-sse41", "--no-sse42", "--enable-avx",
             ]))
+        args.append("--\(probability(0.9) ? "no-": "")emit-interpreter-entry")
+        if probability(0.1) {
+            args.append("--enable-ic-frame-pointers")
+        }
+        if probability(0.1) {
+            args.append("--scalar-replace-arguments")
+        }
+        args.append("--monomorphic-inlining=\(probability(0.9) ? "default": "always")")
+        if probability(0.1) {
+            args.append("--more-compartments")
+        }
+        args.append("--\(probability(0.9) ? "enable": "no")-parallel-marking")
+        args.append("--ion-iterator-indices=\(probability(0.7) ? "on": "off")")
+        args.append("--write-protect-code=\(probability(0.8) ? "on": "off")")
+        args.append("--object-keys-scalar-replacement=\(probability(0.5) ? "on": "off")")
+        if probability(0.1) {
+            args.append("--ion-regalloc=\(chooseUniform(from: ["backtracking", "simple"]))")
+        }
+        if probability(0.1) {
+            args.append("--ion-eager")
+        }
+        if probability(0.2) {
+            args.append("--fast-warmup")
+        }
+        if probability(0.05) {
+            args.append("--blinterp-eager")
+        } else if probability(0.1) {
+            args.append("--no-blinterp")
+        }
+        if probability(0.1) {
+            args.append("--ion-limit-script-size=off")
+        }
+        if probability(0.1) {
+            args.append("--no-cgc")
+        }
+        if probability(0.1) {
+            args.append("--no-ggc")
+        }
+        if probability(0.1) {
+            args.append("--no-incremental-gc")
+        }
+        if probability(0.05) {
+            args.append("--no-jit-backend")
+        }
         return args
     },
 
