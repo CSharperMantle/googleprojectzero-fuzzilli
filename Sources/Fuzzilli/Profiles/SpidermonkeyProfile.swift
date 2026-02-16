@@ -30,6 +30,7 @@ private let GcGenerator = CodeGenerator("GcGenerator") { b in
 let spidermonkeyProfile = Profile(
     processArgs: { randomize in
         var args = [
+            "--asmjs",
             "--baseline-warmup-threshold=10",
             "--ion-warmup-threshold=100",
             "--ion-check-range-analysis",
@@ -59,6 +60,7 @@ let spidermonkeyProfile = Profile(
             args.append("--no-native-regexp")
         }
         args.append("--ion-optimize-shapeguards=\(probability(0.9) ? "on" : "off")")
+        args.append("--ion-optimize-gcbarriers=\(probability(0.9) ? "on" : "off")")
         args.append("--ion-licm=\(probability(0.9) ? "on" : "off")")
         args.append("--ion-instruction-reordering=\(probability(0.9) ? "on" : "off")")
         args.append("--cache-ir-stubs=\(probability(0.9) ? "on" : "off")")
@@ -71,6 +73,18 @@ let spidermonkeyProfile = Profile(
         }
         args.append("--\(probability(0.9) ? "enable" : "disable")-watchtower")
         args.append("--ion-sink=\(probability(0.0) ? "on" : "off")")  // disabled
+        args.append("--\(probability(0.9) ? "no-" : "")emit-interpreter-entry")
+        if probability(0.1) {
+            args.append("--enable-ic-frame-pointers")
+        }
+        if probability(0.1) {
+            args.append("--scalar-replace-arguments")
+        }
+        args.append("--monomorphic-inlining=\(probability(0.9) ? "default" : "always")")
+        if probability(0.1) {
+            args.append("--more-compartments")
+        }
+        args.append("--\(probability(0.9) ? "enable" : "no")-parallel-marking")
         return args
     },
 
