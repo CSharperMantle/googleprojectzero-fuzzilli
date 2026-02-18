@@ -150,45 +150,107 @@ fileprivate let JobQueueGenerator = CodeGenerator("JobQueueGenerator") { b in
     b.callFunction(b.createNamedVariable(forBuiltin: "drainJobQueue"))
 }
 
+// From V8RegExpFuzzer
 fileprivate let SpidermonkeyRegExpFuzzer = ProgramTemplate("SpidermonkeyRegExpFuzzer") { b in
     b.buildPrefix()
     b.build(n: 20)
 
+    let twoByteSubjectString = "f\\uD83D\\uDCA9ba\\u2603"
+
+    let replacementCandidates = [
+        "X",
+        "$1$2$3",
+        "$$$&$`$'$1",
+        "",
+    ]
+
+    let lastIndices = [
+        "undefined", "-1", "0",
+        "1", "2", "3",
+        "4", "5", "6",
+        "7", "8", "9",
+        "50", "4294967296", "2147483647",
+        "2147483648", "NaN", "Not a Number",
+    ]
+
     let f = b.buildPlainFunction(with: .parameters(n: 0)) { _ in
         let (pattern, flags) = b.randomRegExpPatternAndFlags()
         let regex = b.loadRegExp(pattern, flags)
-        let subject = b.loadString(b.randomString())
+        let symbol = b.createNamedVariable(forBuiltin: "Symbol")
+
+        let lastIndexString = b.loadString(chooseUniform(from: lastIndices))
+        b.setProperty("lastIndex", of: regex, to: lastIndexString)
+
+        let subject =
+            probability(0.15) ? b.loadString(twoByteSubjectString) : b.loadString(b.randomString())
+        let result = b.loadNull()
 
         b.buildTryCatchFinally(
             tryBody: {
                 withEqualProbability(
                     {
-                        _ = b.callMethod("exec", on: regex, withArgs: [subject])
+                        let res = b.callMethod("exec", on: regex, withArgs: [subject])
+                        b.reassign(variable: result, value: res)
                     },
                     {
-                        _ = b.callMethod("test", on: regex, withArgs: [subject])
+                        let res = b.callMethod("test", on: regex, withArgs: [subject])
+                        b.reassign(variable: result, value: res)
                     },
                     {
-                        _ = b.callMethod("match", on: subject, withArgs: [regex])
+                        let match = b.getProperty("match", of: symbol)
+                        let res = b.callComputedMethod(match, on: regex, withArgs: [subject])
+                        b.reassign(variable: result, value: res)
                     },
                     {
-                        _ = b.callMethod(
-                            "replace", on: subject,
-                            withArgs: [regex, b.loadString(b.randomString())])
+                        let replace = b.getProperty("replace", of: symbol)
+                        let replacement = withEqualProbability(
+                            { b.loadString(b.randomString()) },
+                            { b.loadString(chooseUniform(from: replacementCandidates)) },
+                            {
+                                b.buildPlainFunction(with: .parameters(n: 5)) { args in
+                                    b.doReturn(
+                                        withEqualProbability(
+                                            { b.loadString(b.randomString()) },
+                                            { b.randomJsVariable() }
+                                        ))
+                                }
+                            }
+                        )
+                        let res = b.callComputedMethod(
+                            replace, on: regex, withArgs: [subject, replacement])
+                        b.reassign(variable: result, value: res)
                     },
                     {
-                        _ = b.callMethod(
-                            "split", on: subject,
-                            withArgs: [regex, b.loadInt(Int64.random(in: 0...64))])
+                        let search = b.getProperty("search", of: symbol)
+                        let res = b.callComputedMethod(search, on: regex, withArgs: [subject])
+                        b.reassign(variable: result, value: res)
+                    },
+                    {
+                        let split = b.getProperty("split", of: symbol)
+                        let splitLimit = withEqualProbability(
+                            { b.loadUndefined() },
+                            { b.loadString("not a number") },
+                            { b.loadInt(Int64.random(in: 0...128)) }
+                        )
+                        let res = b.callComputedMethod(
+                            split, on: regex, withArgs: [subject, splitLimit])
+                        b.reassign(variable: result, value: res)
                     })
+
+                if probability(0.5) {
+                    b.callMethod("match", on: subject, withArgs: [regex])
+                }
+
+                b.build(n: 6)
             },
             catchBody: { _ in
             })
 
         b.build(n: 8)
+        b.doReturn(result)
     }
 
-    for _ in 0..<Int.random(in: 3...8) {
+    for _ in 0..<Int.random(in: 5...14) {
         b.callFunction(f)
     }
 
