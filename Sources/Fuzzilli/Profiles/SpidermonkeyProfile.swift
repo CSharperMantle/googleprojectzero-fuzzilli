@@ -27,6 +27,241 @@ private let GcGenerator = CodeGenerator("GcGenerator") { b in
     b.callFunction(b.createNamedVariable(forBuiltin: "gc"))
 }
 
+fileprivate let MinorGcGenerator = CodeGenerator("MinorGcGenerator") { b in
+    let minorgc = b.createNamedVariable(forBuiltin: "minorgc")
+    if probability(0.5) {
+        b.callFunction(minorgc, withArgs: [b.loadBool(probability(0.5))])
+    } else {
+        b.callFunction(minorgc)
+    }
+}
+
+fileprivate let MaybeGcGenerator = CodeGenerator("MaybeGcGenerator") { b in
+    b.callFunction(b.createNamedVariable(forBuiltin: "maybegc"))
+}
+
+fileprivate let IncrementalGcGenerator = CodeGenerator("IncrementalGcGenerator") { b in
+    b.buildTryCatchFinally(
+        tryBody: {
+            let schedulezone = b.createNamedVariable(forBuiltin: "schedulezone")
+            let startgc = b.createNamedVariable(forBuiltin: "startgc")
+            let gcslice = b.createNamedVariable(forBuiltin: "gcslice")
+            let finishgc = b.createNamedVariable(forBuiltin: "finishgc")
+            let abortgc = b.createNamedVariable(forBuiltin: "abortgc")
+
+            // schedulezone([obj | string]) throws for other types.
+            if b.hasVisibleVariables && probability(0.5),
+                let obj = b.randomVariable(ofType: .object())
+            {
+                b.callFunction(schedulezone, withArgs: [obj])
+            } else {
+                b.callFunction(schedulezone, withArgs: [b.loadString(b.randomString())])
+            }
+
+            let budget = b.loadInt(Int64.random(in: 1...2000))
+            if probability(0.3) {
+                b.callFunction(startgc, withArgs: [budget, b.loadString("shrinking")])
+            } else {
+                b.callFunction(startgc, withArgs: [budget])
+            }
+
+            for _ in 0..<Int.random(in: 1...3) {
+                b.callFunction(gcslice, withArgs: [b.loadInt(Int64.random(in: 1...2000))])
+            }
+
+            if probability(0.8) {
+                b.callFunction(finishgc)
+            } else {
+                b.callFunction(abortgc)
+            }
+        },
+        catchBody: { _ in
+        }
+    )
+}
+
+fileprivate let GcZealGenerator = CodeGenerator("GcZealGenerator") { b in
+    b.buildTryCatchFinally(
+        tryBody: {
+            let gczeal = b.createNamedVariable(forBuiltin: "gczeal")
+            let unsetgczeal = b.createNamedVariable(forBuiltin: "unsetgczeal")
+            // Match ZealMode::Limit
+            let mode = b.loadInt(Int64.random(in: 0...27))
+
+            if probability(0.75) {
+                b.callFunction(gczeal, withArgs: [mode, b.loadInt(Int64.random(in: 1...50))])
+            } else {
+                b.callFunction(unsetgczeal, withArgs: [mode])
+            }
+        },
+        catchBody: { _ in
+        }
+    )
+}
+
+fileprivate let SpidermonkeyStringShapeGenerator = CodeGenerator("SpidermonkeyStringShapeGenerator") { b in
+    b.buildTryCatchFinally(
+        tryBody: {
+            let newString = b.createNamedVariable(forBuiltin: "newString")
+            let newDependentString = b.createNamedVariable(forBuiltin: "newDependentString")
+            let ensureLinearString = b.createNamedVariable(forBuiltin: "ensureLinearString")
+
+            // Results must exceed MAX_LENGTH_LATIN1/MAX_LENGTH_TWO_BYTE (vm/StringType.h),
+            // otherwise the result fits into an inline string and newDependentString() throws.
+            let twoByte = probability(0.25)
+            let minResultLength = (twoByte ? 12 : 24) + 1
+            let baseLength = Int.random(in: 30...120)
+            func randomBaseString(_ length: Int) -> String {
+                twoByte
+                    ? String.random(ofLength: length, withCharSet: Array("\u{202E}\u{2603}\u{FFFD}"))
+                    : String.random(ofLength: length)
+            }
+
+            let base: Variable
+            if probability(0.2) {
+                let newRope = b.createNamedVariable(forBuiltin: "newRope")
+                let halfLength = baseLength / 2
+                base = b.callFunction(newRope, withArgs: [
+                    b.loadString(randomBaseString(halfLength)),
+                    b.loadString(randomBaseString(baseLength - halfLength)),
+                ])
+            } else {
+                var newStringArgs = [b.loadString(randomBaseString(baseLength))]
+                if probability(0.3) {
+                    newStringArgs.append(b.createObject(with: [
+                        (twoByte ? "twoByte" : "tenured"): b.loadBool(true),
+                    ]))
+                }
+                base = b.callFunction(newString, withArgs: newStringArgs)
+            }
+
+            // A start of 0 with no end index would return the base string itself,
+            // which is not a dependent string.
+            var candidateArgs = [base]
+            let resultLength = Int.random(in: minResultLength...(baseLength - 1))
+            if probability(0.7) {
+                let startIndex = Int.random(in: 0...(baseLength - resultLength))
+                candidateArgs.append(b.loadInt(Int64(startIndex)))
+                candidateArgs.append(b.loadInt(Int64(startIndex + resultLength)))
+            } else {
+                let startIndex = Int.random(in: 1...(baseLength - resultLength))
+                candidateArgs.append(b.loadInt(Int64(startIndex)))
+            }
+            if probability(0.3) {
+                candidateArgs.append(b.createObject(with: [
+                    "tenured": b.loadBool(probability(0.5)),
+                    "suppress-contraction": b.loadBool(probability(0.5)),
+                ]))
+            }
+
+            let candidate = b.callFunction(newDependentString, withArgs: candidateArgs)
+            if probability(0.8) {
+                _ = b.callFunction(ensureLinearString, withArgs: [candidate])
+            }
+        },
+        catchBody: { _ in
+        }
+    )
+}
+
+fileprivate let RelazifyFunctionsGenerator = CodeGenerator("RelazifyFunctionsGenerator", inputs: .required(.function())) { b, f in
+    assert(b.type(of: f).Is(.function()))
+    let arguments = b.randomArguments(forCalling: f)
+
+    b.callFunction(f, withArgs: arguments)
+    b.callFunction(b.createNamedVariable(forBuiltin: "relazifyFunctions"))
+    b.callFunction(f, withArgs: arguments)
+}
+
+fileprivate let TrialInlineGenerator = CodeGenerator("TrialInlineGenerator") { b in
+    let trialInline = b.createNamedVariable(forBuiltin: "trialInline")
+    let f = b.buildPlainFunction(with: b.randomParameters()) { _ in
+        b.build(n: Int.random(in: 3...8))
+        if probability(0.7) {
+            b.callFunction(trialInline)
+        }
+        b.doReturn(b.randomJsVariable())
+    }
+
+    let arguments = b.randomArguments(forCalling: f)
+    b.buildRepeatLoop(n: Int.random(in: 5...20)) { _ in
+        b.callFunction(f, withArgs: arguments)
+    }
+}
+
+fileprivate let JobQueueGenerator = CodeGenerator("JobQueueGenerator") { b in
+    b.callFunction(b.createNamedVariable(forBuiltin: "drainJobQueue"))
+}
+
+fileprivate let SpidermonkeyRegExpFuzzer = ProgramTemplate("SpidermonkeyRegExpFuzzer") { b in
+    b.buildPrefix()
+    b.build(n: 20)
+
+    let f = b.buildPlainFunction(with: .parameters(n: 0)) { _ in
+        let (pattern, flags) = b.randomRegExpPatternAndFlags()
+        let regex = b.loadRegExp(pattern, flags)
+        let subject = b.loadString(b.randomString())
+
+        b.buildTryCatchFinally(
+            tryBody: {
+                withEqualProbability(
+                    {
+                        _ = b.callMethod("exec", on: regex, withArgs: [subject])
+                    },
+                    {
+                        _ = b.callMethod("test", on: regex, withArgs: [subject])
+                    },
+                    {
+                        _ = b.callMethod("match", on: subject, withArgs: [regex])
+                    },
+                    {
+                        _ = b.callMethod(
+                            "replace", on: subject,
+                            withArgs: [regex, b.loadString(b.randomString())])
+                    },
+                    {
+                        _ = b.callMethod(
+                            "split", on: subject,
+                            withArgs: [regex, b.loadInt(Int64.random(in: 0...64))])
+                    })
+            },
+            catchBody: { _ in
+            })
+
+        b.build(n: 8)
+    }
+
+    for _ in 0..<Int.random(in: 3...8) {
+        b.callFunction(f)
+    }
+
+    b.build(n: 15)
+}
+
+fileprivate let SpidermonkeyIncrementalGcFuzzer = ProgramTemplate("SpidermonkeyIncrementalGcFuzzer") { b in
+    b.buildPrefix()
+
+    let schedulezone = b.createNamedVariable(forBuiltin: "schedulezone")
+    let startgc = b.createNamedVariable(forBuiltin: "startgc")
+    let gcslice = b.createNamedVariable(forBuiltin: "gcslice")
+    let finishgc = b.createNamedVariable(forBuiltin: "finishgc")
+
+    let targets = Int.random(in: 1...3)
+    for _ in 0..<targets {
+        let obj = b.createObject(with: ["v": b.randomJsVariable()])
+        b.callFunction(schedulezone, withArgs: [obj])
+    }
+
+    b.callFunction(startgc, withArgs: [b.loadInt(Int64.random(in: 1...3000))])
+    for _ in 0..<Int.random(in: 1...5) {
+        b.build(n: Int.random(in: 3...12))
+        b.callFunction(gcslice, withArgs: [b.loadInt(Int64.random(in: 1...2000))])
+    }
+    b.callFunction(finishgc)
+
+    b.build(n: 10)
+}
+
 let spidermonkeyProfile = Profile(
     processArgs: { randomize in
         var args = [
@@ -148,11 +383,22 @@ let spidermonkeyProfile = Profile(
     ],
 
     additionalCodeGenerators: [
-        (ForceSpidermonkeyIonGenerator, 10),
-        (GcGenerator, 10),
+        (ForceSpidermonkeyIonGenerator,    10),
+        (RelazifyFunctionsGenerator,        5),
+        (TrialInlineGenerator,              5),
+        (GcGenerator,                      10),
+        (MinorGcGenerator,                  5),
+        (MaybeGcGenerator,                  5),
+        (IncrementalGcGenerator,            5),
+        (GcZealGenerator,                   5),
+        (SpidermonkeyStringShapeGenerator, 10),
+        (JobQueueGenerator,                 5),
     ],
 
-    additionalProgramTemplates: WeightedList<ProgramTemplate>([]),
+    additionalProgramTemplates: WeightedList<ProgramTemplate>([
+        (SpidermonkeyRegExpFuzzer,          1),
+        (SpidermonkeyIncrementalGcFuzzer,   1),
+    ]),
 
     disabledCodeGenerators: [],
 
@@ -160,8 +406,52 @@ let spidermonkeyProfile = Profile(
 
     additionalBuiltins: [
         "gc": .function([] => .undefined),
+        "minorgc": .function([.opt(.boolean)] => .undefined),
+        "maybegc": .function([] => .undefined),
+        "gczeal": .function([.opt(.integer | .string), .opt(.integer)] => (.undefined | .integer)),
+        "unsetgczeal": .function([.oneof(.integer, .string)] => .undefined),
+        "schedulezone": .function([.jsAnything] => .undefined),
+        "startgc": .function([.opt(.integer), .opt(.string)] => .undefined),
+        "gcslice": .function([.opt(.integer), .opt(.object())] => .undefined),
+        "finishgc": .function([] => .undefined),
+        "abortgc": .function([] => .undefined),
+        "gcstate": .function([.opt(.object())] => .string),
+        "relazifyFunctions": .function([] => .undefined),
+        "trialInline": .function([] => .undefined),
+        "newString": .function([.string, .opt(.object())] => .string),
+        "newDependentString": .function([.string, .integer, .opt(.integer), .opt(.object())] => .string),
+        "ensureLinearString": .function([.string] => .string),
+        "addWatchtowerTarget": .function([.object()] => .undefined),
+        "getWatchtowerLog": .function([] => .object()),
+        "getBuildConfiguration": .function([.opt(.string)] => .jsAnything),
+        "getRealmConfiguration": .function([.opt(.string)] => .jsAnything),
         "drainJobQueue": .function([] => .undefined),
         "bailout": .function([] => .undefined),
+        "bailAfter": .function([.number] => .undefined),
+        "invalidate": .function([] => .undefined),
+        "settlePromiseNow": .function([.object()] => .undefined),
+        "getWaitForAllPromise": .function([.object()] => .jsPromise()),
+        "resolvePromise": .function([.object(), .jsAnything] => .undefined),
+        "rejectPromise": .function([.object(), .jsAnything] => .undefined),
+        "gcparam": .function([.string, .opt(.number)] => (.number | .undefined)),
+        // "setJitCompilerOption": .function([.string, .number] => .undefined),
+        // "getJitCompilerOptions": .function([] => .object()),
+        "addObjectFuse": .function([.object()] => .undefined),
+        "getObjectFuseState": .function([.object()] => .object()),
+        "newRope": .function([.string, .string, .opt(.object())] => .string),
+        "isRope": .function([.string] => .boolean),
+        "safeResolvePromise": .function([.object(), .jsAnything] => .undefined),
+        "verifyprebarriers": .function([] => .undefined),
+        "fullcompartmentchecks": .function([.boolean] => .undefined),
+        "gcPreserveCode": .function([] => .undefined),
+        "setMarkStackLimit": .function([.number] => .undefined),
+        "selectforgc": .function([] => .undefined),
+        "enableOsiPointRegisterChecks": .function([] => .undefined),
+        "makeFinalizeObserver": .function([] => .object()),
+        "finalizeCount": .function([] => .number),
+        "representativeStringArray": .function([] => .jsArray),
+        "displayName": .function([.function()] => .string),
+        "hasInvalidatedTeleporting": .function([.object()] => .boolean),
     ],
 
     additionalObjectGroups: [],
