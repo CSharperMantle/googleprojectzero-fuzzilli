@@ -284,7 +284,9 @@ fileprivate let SpidermonkeyIncrementalGcFuzzer = ProgramTemplate("SpidermonkeyI
 let spidermonkeyProfile = Profile(
     processArgs: { randomize in
         var args = [
+            // Feature selection
             "--asmjs",
+            // Common flags for fuzzing
             "--baseline-warmup-threshold=10",
             "--ion-warmup-threshold=100",
             "--ion-check-range-analysis",
