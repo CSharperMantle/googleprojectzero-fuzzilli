@@ -880,16 +880,14 @@ public struct JSTyper: Analyzer {
                 // exnref in the standard exception handling spec.)
                 setType(of: instr.innerOutput(1), to: .exceptionLabel)
                 // Type the tag parameters.
-                guard let labelParameters = type(of: instr.input(1)).wasmTagType?.parameters else {
-                    // TODO(mliedtke): I believe that sooner or later we will run into this fatal
-                    // error. A tag can be defined in JavaScript and then be used in Wasm. Later on
-                    // the varaible defining the tag can be reassigned to with a different type,
-                    // loosening the inferred type information suddenly not being a tag any more.
-                    fatalError("Input into WasmBeginCatch not a tag type, actual "
-                        + "\(type(of: instr.input(1))), defined in \(definingInstruction)")
-                }
-                for (innerOutput, paramType) in zip(instr.innerOutputs.dropFirst(2), labelParameters) {
-                    setType(of: innerOutput, to: paramType)
+                if let labelParameters = type(of: tag).wasmTagType?.parameters {
+                    for (innerOutput, paramType) in zip(instr.innerOutputs.dropFirst(2), labelParameters) {
+                        setType(of: innerOutput, to: paramType)
+                    }
+                } else {
+                    for innerOutput in instr.innerOutputs.dropFirst(2) {
+                        setType(of: innerOutput, to: .wasmAnything)
+                    }
                 }
                 for (output, outputType) in zip(instr.outputs, blockSignature.outputTypes) {
                     setType(of: output, to: outputType)
