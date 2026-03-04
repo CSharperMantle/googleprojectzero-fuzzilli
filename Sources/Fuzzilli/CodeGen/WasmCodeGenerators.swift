@@ -223,7 +223,10 @@ public let WasmCodeGenerators: [CodeGenerator] = [
         var initial_fields: [Variable] = []
         for field in typeDesc.fields {
             let fieldType = field.type.unpacked()
-            let fieldValue = function.findOrGenerateWasmVar(ofType: fieldType)
+            guard let fieldValue = b.randomVariable(ofType: fieldType) ?? function.generateRandomWasmVar(ofType: fieldType)
+            else {
+                return
+            }
             initial_fields.append(fieldValue)
         }
         function.wasmStructNew(structType: structType, fields: initial_fields)
