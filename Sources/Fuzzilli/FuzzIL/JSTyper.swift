@@ -489,13 +489,28 @@ public struct JSTyper: Analyzer {
         wasmTypeDefMap[desc] = def
     }
 
-    func getWasmTypeDef(for type: ILType) -> Variable {
+    func maybeGetWasmTypeDef(for type: ILType) -> Variable? {
         assert(type.isWasmReferenceType)
         guard case .Index(let desc) = type.wasmReferenceType!.kind else {
             fatalError("\(type) is not an index type")
         }
-        guard let desc = desc.get(), let typeDef = wasmTypeDefMap[desc] else {
-            fatalError("missing type definition link for type \(type), desc \(desc)")
+        guard let desc = desc.get() else {
+            return nil
+        }
+
+        if let typeDef = wasmTypeDefMap[desc] {
+            return typeDef
+        }
+
+        // Fallback path for cases where the link map was not populated for this description,
+        // but the corresponding type definition variable is still available in the current state.
+        return state.findWasmTypeDef(byDescription: desc)
+    }
+
+    func getWasmTypeDef(for type: ILType) -> Variable {
+        guard let typeDef = maybeGetWasmTypeDef(for: type) else {
+            let desc = type.wasmReferenceType?.kind
+            fatalError("missing type definition link for type \(type), desc \(String(describing: desc))")
         }
         return typeDef
     }
@@ -2398,6 +2413,18 @@ public struct JSTyper: Analyzer {
 
         func hasType(for v: Variable) -> Bool {
             return overallState.types[v] != nil
+        }
+
+        func findWasmTypeDef(byDescription desc: WasmTypeDescription) -> Variable? {
+            for (variable, type) in overallState.types {
+                guard type.Is(.wasmTypeDef()), let typeDesc = type.wasmTypeDefinition?.description else {
+                    continue
+                }
+                if typeDesc == desc {
+                    return variable
+                }
+            }
+            return nil
         }
 
         /// Set the type of the given variable in the current state.

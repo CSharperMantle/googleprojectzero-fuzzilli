@@ -5100,7 +5100,10 @@ public class ProgramBuilder {
                         }
                     case .Index(_):
                         if type.wasmReferenceType?.nullability ?? false {
-                            return self.wasmRefNull(typeDef: b.jsTyper.getWasmTypeDef(for: type))
+                            guard let typeDef = b.jsTyper.maybeGetWasmTypeDef(for: type) else {
+                                return nil
+                            }
+                            return self.wasmRefNull(typeDef: typeDef)
                         }
                     case .none:
                         break
