@@ -146,6 +146,24 @@ fileprivate let TrialInlineGenerator = CodeGenerator("TrialInlineGenerator") { b
     }
 }
 
+fileprivate let IonDisableGenerator = CodeGenerator("IonDisableGenerator") { b in
+    let f = b.buildPlainFunction(with: b.randomParameters()) { _ in
+        // The with ({}) {} pattern at function start disables Ion compilation
+        let emptyObj = b.createObject(with: [:])
+        b.buildWith(emptyObj) {
+            // Empty body
+        }
+        // Generate substantial function body to exercise interpreter coverage
+        b.build(n: 20)
+        b.doReturn(b.randomJsVariable())
+    }
+
+    let arguments = b.randomArguments(forCalling: f)
+    b.buildRepeatLoop(n: Int.random(in: 5...20)) { _ in
+        b.callFunction(f, withArgs: arguments)
+    }
+}
+
 fileprivate let JobQueueGenerator = CodeGenerator("JobQueueGenerator") { b in
     b.callFunction(b.createNamedVariable(forBuiltin: "drainJobQueue"))
 }
@@ -375,6 +393,7 @@ let spidermonkeyProfile = Profile(
 
     additionalCodeGenerators: [
         (ForceSpidermonkeyIonGenerator,    10),
+        (IonDisableGenerator,               5),
         (RelazifyFunctionsGenerator,        5),
         (TrialInlineGenerator,              5),
         (GcGenerator,                      10),
