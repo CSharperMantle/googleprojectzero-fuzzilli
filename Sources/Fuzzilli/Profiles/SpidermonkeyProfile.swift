@@ -66,11 +66,6 @@ let spidermonkeyProfile = Profile(
             chooseUniform(from: [
                 "--no-sse3", "--no-ssse3", "--no-sse41", "--no-sse42", "--enable-avx",
             ]))
-        if probability(0.1) {
-            args.append("--ion-regalloc=testbed")
-        }
-        args.append(probability(0.9) ? "--enable-watchtower" : "--disable-watchtower")
-        args.append("--ion-sink=\(probability(0.0) ? "on": "off")")  // disabled
         return args
     },
 
