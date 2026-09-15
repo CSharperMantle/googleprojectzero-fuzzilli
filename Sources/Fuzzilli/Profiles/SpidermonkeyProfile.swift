@@ -211,6 +211,167 @@ fileprivate let JobQueueGenerator = CodeGenerator("JobQueueGenerator") { b in
     b.callFunction(b.createNamedVariable(forBuiltin: "drainJobQueue"))
 }
 
+private let JitCompilerOptionGenerator = CodeGenerator("JitCompilerOptionGenerator") { b in
+    let setJitCompilerOption = b.createNamedVariable(forBuiltin: "setJitCompilerOption")
+
+    // Option names and sane value ranges, JIT_COMPILER_OPTIONS (jsapi.h). Values persist
+    // for the worker's lifetime, so they stay within randomized-flag territory.
+    let options: [(String, ClosedRange<Int64>)] = [
+        ("ion.warmup.trigger", 0...1024),
+        ("baseline.warmup.trigger", 0...1024),
+        ("ion.gvn.enable", 0...1),
+        ("ic.force-megamorphic", 0...1),
+        ("ion.forceinlineCaches", 0...1),
+        ("inlining.bytecode-max-length", 10...1000),
+        ("ion.frequent-bailout-threshold", 0...1000),
+        ("offthread-compilation.enable", 0...1),
+    ]
+
+    let (name, range) = chooseUniform(from: options)
+    b.callFunction(setJitCompilerOption, withArgs: [
+        b.loadString(name), b.loadInt(Int64.random(in: range)),
+    ])
+    b.build(n: Int.random(in: 5...15))
+}
+
+private let WatchtowerGenerator = CodeGenerator("WatchtowerGenerator") { b in
+    let addWatchtowerTarget = b.createNamedVariable(forBuiltin: "addWatchtowerTarget")
+    let getWatchtowerLog = b.createNamedVariable(forBuiltin: "getWatchtowerLog")
+
+    let obj = b.createObject(with: [b.randomPropertyName(): b.randomJsVariable()])
+    b.callFunction(addWatchtowerTarget, withArgs: [obj])
+
+    b.buildRepeatLoop(n: Int.random(in: 5...20)) { _ in
+        withEqualProbability({
+            b.setProperty(b.randomPropertyName(), of: obj, to: b.randomJsVariable())
+        }, {
+            b.deleteProperty(b.randomPropertyName(), of: obj)
+        }, {
+            let Object = b.createNamedVariable(forBuiltin: "Object")
+            b.callMethod("defineProperty", on: Object, withArgs: [
+                obj, b.loadString(b.randomPropertyName()), b.createObject(with: [:]),
+            ])
+        })
+    }
+
+    b.callFunction(getWatchtowerLog)
+}
+
+private let ObjectFuseGenerator = CodeGenerator("ObjectFuseGenerator") { b in
+    let addObjectFuse = b.createNamedVariable(forBuiltin: "addObjectFuse")
+    let getObjectFuseState = b.createNamedVariable(forBuiltin: "getObjectFuseState")
+
+    b.buildTryCatchFinally(
+        tryBody: {
+            let obj = b.createObject(with: [b.randomPropertyName(): b.randomJsVariable()])
+            b.callFunction(addObjectFuse, withArgs: [obj])
+
+            b.buildRepeatLoop(n: Int.random(in: 5...15)) { _ in
+                b.setProperty(b.randomPropertyName(), of: obj, to: b.randomJsVariable())
+            }
+            b.callFunction(getObjectFuseState, withArgs: [obj])
+        },
+        catchBody: { _ in
+        }
+    )
+}
+
+private let GCParamGenerator = CodeGenerator("GCParamGenerator") { b in
+    let gcparam = b.createNamedVariable(forBuiltin: "gcparam")
+
+    // Writable, fuzzing-safe parameters (FOR_EACH_GC_PARAM in gc/GC.h). maxBytes and
+    // maxNurseryBytes are skipped under --disable-oom-functions, semispaceNurseryEnabled
+    // under --fuzzing-safe, concurrentMarkingEnabled rejects 1 in this build, and
+    // nurseryEnabled fails under --no-ggc — hence the try/catch. Values persist for the
+    // worker's lifetime.
+    let params: [(String, ClosedRange<Int64>)] = [
+        ("minNurseryBytes", 1 << 16...1 << 20),
+        ("sliceTimeBudgetMS", 1...1000),
+        ("allocationThreshold", 1...4095),
+        ("smallHeapSizeMax", 1...200),
+        ("largeHeapSizeMin", 1...200),
+        ("heapGrowthFactor", 100...1000),
+        ("incrementalGCEnabled", 0...1),
+        ("perZoneGCEnabled", 0...1),
+        ("compactingEnabled", 0...1),
+        ("nurseryEnabled", 0...1),
+        ("parallelMarkingEnabled", 0...1),
+        ("balancedHeapLimitsEnabled", 0...1),
+    ]
+
+    let (name, range) = chooseUniform(from: params)
+    b.buildTryCatchFinally(
+        tryBody: {
+            b.callFunction(gcparam, withArgs: [b.loadString(name), b.loadInt(Int64.random(in: range))])
+        },
+        catchBody: { _ in
+        }
+    )
+    b.build(n: Int.random(in: 5...15))
+}
+
+private let BailoutStormGenerator = CodeGenerator("BailoutStormGenerator") { b in
+    let bailout = b.createNamedVariable(forBuiltin: "bailout")
+    let bailAfter = b.createNamedVariable(forBuiltin: "bailAfter")
+
+    let f = b.buildPlainFunction(with: b.randomParameters()) { _ in
+        b.build(n: Int.random(in: 5...15))
+        b.doReturn(b.randomJsVariable())
+    }
+
+    b.callFunction(bailAfter, withArgs: [b.loadInt(Int64.random(in: 1...50))])
+    let arguments = b.randomArguments(forCalling: f)
+    b.buildRepeatLoop(n: Int.random(in: 50...200)) { _ in
+        b.callFunction(f, withArgs: arguments)
+        if probability(0.2) {
+            b.callFunction(bailout)
+        }
+    }
+}
+
+private let GeneratorResumeGenerator = CodeGenerator("GeneratorResumeGenerator") { b in
+    let minorgc = b.createNamedVariable(forBuiltin: "minorgc")
+
+    let f = b.buildGeneratorFunction(with: b.randomParameters()) { _ in
+        b.build(n: Int.random(in: 2...5))
+        for _ in 0..<Int.random(in: 2...4) {
+            b.yield(b.randomJsVariable())
+            b.build(n: Int.random(in: 1...4))
+            if probability(0.3) {
+                b.callFunction(minorgc)
+            }
+        }
+        b.doReturn(b.randomJsVariable())
+    }
+
+    let arguments = b.randomArguments(forCalling: f)
+    b.buildRepeatLoop(n: Int.random(in: 10...40)) { _ in
+        let it = b.callFunction(f, withArgs: arguments)
+        b.buildRepeatLoop(n: Int.random(in: 2...6)) { _ in
+            b.callMethod("next", on: it)
+        }
+    }
+}
+
+private let AsyncResumeGenerator = CodeGenerator("AsyncResumeGenerator") { b in
+    let drainJobQueue = b.createNamedVariable(forBuiltin: "drainJobQueue")
+
+    let f = b.buildAsyncFunction(with: b.randomParameters()) { _ in
+        b.build(n: Int.random(in: 2...5))
+        for _ in 0..<Int.random(in: 1...3) {
+            b.await(b.randomJsVariable())
+            b.build(n: Int.random(in: 1...4))
+        }
+        b.doReturn(b.randomJsVariable())
+    }
+
+    let arguments = b.randomArguments(forCalling: f)
+    b.buildRepeatLoop(n: Int.random(in: 5...20)) { _ in
+        b.callFunction(f, withArgs: arguments)
+        b.callFunction(drainJobQueue)
+    }
+}
+
 // From V8RegExpFuzzer
 fileprivate let SpidermonkeyRegExpFuzzer = ProgramTemplate("SpidermonkeyRegExpFuzzer") { b in
     b.buildPrefix()
@@ -295,6 +456,18 @@ fileprivate let SpidermonkeyRegExpFuzzer = ProgramTemplate("SpidermonkeyRegExpFu
                         )
                         let res = b.callComputedMethod(
                             split, on: regex, withArgs: [subject, splitLimit])
+                        b.reassign(variable: result, value: res)
+                    },
+                    {
+                        let matchAll = b.getProperty("matchAll", of: symbol)
+                        let res = b.callComputedMethod(matchAll, on: regex, withArgs: [subject])
+                        b.reassign(variable: result, value: res)
+                    },
+                    {
+                        let replaceAll = b.getProperty("replaceAll", of: symbol)
+                        let res = b.callComputedMethod(replaceAll, on: regex, withArgs: [
+                            subject, b.loadString(b.randomString()),
+                        ])
                         b.reassign(variable: result, value: res)
                     })
 
@@ -474,6 +647,13 @@ let spidermonkeyProfile = Profile(
         (GcZealGenerator,                   5),
         (SpidermonkeyStringShapeGenerator, 10),
         (JobQueueGenerator,                 5),
+        (JitCompilerOptionGenerator,        3),
+        (WatchtowerGenerator,               5),
+        (ObjectFuseGenerator,               5),
+        (GCParamGenerator,                  4),
+        (BailoutStormGenerator,             4),
+        (GeneratorResumeGenerator,          8),
+        (AsyncResumeGenerator,              8),
     ],
 
     additionalProgramTemplates: WeightedList<ProgramTemplate>([
